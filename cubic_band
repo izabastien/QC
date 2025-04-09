@@ -1,0 +1,115 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import meep as mp
+from meep import mpb
+
+"""Parameters"""
+a = 1.0  # Unit size 
+eps_fond = 1.0  # Background dielectric constant
+resolution = 120
+num_bands = 5
+r = 0.18  # air holes
+
+"""Structure and geometry"""
+data = [
+    [0.5, 0.5, 0.0],
+    [0.5, -0.5, 0.0],
+    [-0.5, -0.5, 0.0],
+    [-0.5, 0.5, 0.0]
+]
+
+geometry_lattice = mp.Lattice(
+    size=mp.Vector3(a, a),
+    basis1=mp.Vector3(1, 0),
+    basis2=mp.Vector3(0, 1)
+)
+geometry = [mp.Cylinder(radius=r, height=mp.inf,
+                      center=mp.Vector3(pt[0], pt[1]),
+           material=mp.Medium(epsilon=11.56)) for pt in data]
+
+"""k space"""
+k_points = [mp.Vector3(), mp.Vector3(0.5, 0.0), 
+           mp.Vector3(0.5, 0.5), mp.Vector3()]
+k_points = mp.interpolate(32, k_points) # Interpolation
+
+"""Mode solver"""
+ms = mpb.ModeSolver(
+    num_bands=num_bands,
+    geometry=geometry,
+    default_material=mp.Medium(epsilon=eps_fond),
+    geometry_lattice=geometry_lattice,
+    resolution=resolution,
+    k_points=k_points
+)
+
+"""Bandgaps detection"""
+def detect_bandgaps(freqs):
+    min_freqs = np.min(freqs, axis=0)
+    max_freqs = np.max(freqs, axis=0)
+    
+    gaps = []
+    for i in range(len(min_freqs)-1):
+        if max_freqs[i] < min_freqs[i+1]:
+            gaps.append((max_freqs[i], min_freqs[i+1]))
+    
+    return gaps
+
+def plot_bands_and_gaps(mode_name, freqs):
+    plt.figure(figsize=(10, 6))
+    
+    # Band diagram
+    for band in range(num_bands):
+        plt.plot(k_dist, [freqs[i][band] for i in range(len(freqs))], 
+                marker='o', markersize=3, label=f'Bande {band+1}')
+    
+    # Detect band gaps
+    gaps = detect_bandgaps(freqs)
+    for i, gap in enumerate(gaps):
+        plt.axhspan(gap[0], gap[1], color='red', alpha=0.2,
+                   label=f'Bandgap {i+1}: [{gap[0]:.3f}, {gap[1]:.3f}]')
+    
+    plt.title(f"Band diagram- {mode_name}")
+    plt.xlabel("k")
+    plt.ylabel("Frequency (a/λ)")
+    plt.legend(loc='upper right')
+    plt.grid(True)
+    plt.show()
+    
+    return gaps
+
+
+k_dist = np.cumsum([0] + [np.linalg.norm(k2 - k1) for k1, k2 in zip(k_points[:-1], k_points[1:])])
+
+structure_affichee = False
+
+# Simulation 
+for mode in ['TE', 'TM']:
+    print(f"\nAnalyse pour le mode {mode}")
+    
+    if mode == 'TE':
+        ms.run_te()
+    else:
+        ms.run_tm()
+    
+    # Plot
+    if not structure_affichee:
+        eps = ms.get_epsilon()
+        plt.figure(figsize=(6, 6))
+        plt.imshow(eps.T, cmap='binary')
+        plt.title("Structure diélectrique")
+        plt.colorbar(label='Permittivité')
+        plt.show()
+        structure_affichee = True
+       
+    freqs = ms.all_freqs
+    gaps = plot_bands_and_gaps(mode, freqs)
+    
+    if gaps:
+        print(f"Bandgaps trouvés pour le mode {mode}:")
+        for i, gap in enumerate(gaps):
+            print(f"  Bandgap {i+1}: [{gap[0]:.4f}, {gap[1]:.4f}] (largeur: {gap[1]-gap[0]:.4f})")
+    else:
+        print(f"Aucun bandgap complet trouvé pour le mode {mode}")
+    
+    gap_info = ms.retrieve_gap(1)
+    print(f"Gap entre bande 1 et 2: {gap_info}")
